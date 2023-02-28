@@ -19,7 +19,8 @@ from django.utils.encoding import force_bytes,force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 
 from .forms import VideoForm
-from .models import RegisteredStudent, RegisteredInstructor, Feedback, Videos, Courses, Course_purchase, Category,Product, Cart  # Login
+from .models import RegisteredStudent, RegisteredInstructor, Feedback, Videos, Courses, Course_purchase, \
+    Category, Cart, Product  # Login
 from .tokens import generate_token
 from django.core.paginator import Paginator, EmptyPage,InvalidPage
 
@@ -97,9 +98,9 @@ def activate(request,uidb64,token):
     if data is not None and generate_token.check_token(data,token):
         data.is_active = True
 
-        # user.profile.signup_confirmation = True
+
         data.save()
-        login(request,data)
+
         messages.success(request, "Your Account has been activated!!")
         return redirect('yogaapp:login')
     else:
@@ -138,22 +139,61 @@ def Logout(request):
     logout(request)
     return redirect("yogaapp:login")
 
+def Passwdemail(request):
+    if request.method=="POST":
+        email=request.POST['email']
+        user=User.objects.get(username=email)
+        std=RegisteredStudent.objects.get(user_id=user.id)
+        current_site = get_current_site(request)
+        email_subject = "Yogastudio Confirmation mail"
+        message2 = render_to_string('password_reset.html', {
 
-def forgotpassword(request):
-    # if request.method == "POST":
-    #     email = request.POST['email']
-    #     data = Login.objects.get(email=email)
-    #     if data:
-    #         password = request.POST['new_password']
-    #         cpassword = request.POST['con_password']
-    #         if password == cpassword:
-    #             data.password = password
-    #             data.save()
-    #             messages.success(request,'Password Reset Successful')
-    #
-    #         else:
-    #             messages.error(request,'Password Mismatch')
+            'name': std.first_name,
+            'domain': current_site.domain,
+            'uid': urlsafe_base64_encode(force_bytes(user.pk)),
+            'token': generate_token.make_token(user)
+        })
+        email = EmailMessage(
+            email_subject,
+            message2,
+            settings.EMAIL_HOST_USER,
+            [user.username],
+        )
+        email.fail_silently = True
+        email.send()
+        messages.info(request,"We have sent you a confirmation mail please confirm your email")
+
+        return redirect("yogaapp:passwd_email")
+    return render(request,"Passwdemail.html")
+
+def forgotpassword(request,uidb64):
+    if request.method == "POST":
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(id=uid)
+        print(uid)
+        password = request.POST['new_password']
+        cpassword = request.POST['con_password']
+        if password == cpassword:
+            user.set_password(password)
+            user.save()
+            messages.success(request,'Password Reset Successful')
+            return redirect("yogaapp:login")
+
+        else:
+            messages.error(request,'Password Mismatch')
     return render(request, 'forgotpassword.html')
+
+def Password_reset(request,uidb64,token):
+    try:
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        data = User.objects.get(pk=uid)
+    except (TypeError,ValueError,OverflowError,User.DoesNotExist):
+        data = None
+
+    if data is not None and generate_token.check_token(data,token):
+        return redirect('yogaapp:forgotpassword',uidb64)
+    else:
+        return render(request,'activation_failed.html')
 
 
 
@@ -252,9 +292,9 @@ def studentchangepassword(request):
                     data.set_password(new_password)
                     data.save()
                     messages.success(request,'Password Changed Successfully')
+                    return redirect("yogaapp:login")
                 else:
                     messages.error(request,'Password Mismatch')
-
             else:
                 messages.error(request,'Old Password Not Matching')
         return render(request, 'studentchangepassword.html')
@@ -262,7 +302,6 @@ def studentchangepassword(request):
 
 
 def coursesenrolled(request):
-
     c = Course_purchase.objects.filter(user_id=request.user.id).values_list('course_id',flat=True)
     print(list(c))
     courses=Courses.objects.filter(id__in=c)
@@ -289,23 +328,18 @@ def Course_endroll(request,c_slug):
 
 
 def feedback(request):
-    # if 'usr' in request.session:
-    #     id=request.session['usr']
-    #     user = RegisteredStudent.objects.filter(id=id)
-    #     c = Course.objects.all()
-    #     if request.method == "POST":
-    #         email = request.POST['email']
-    #         feedback1 = request.POST['feedback']
-    #         course = request.POST['course']
-    #         f = Feedback()
-    #         f.email = email
-    #         f.feedback = feedback1
-    #         f.feeddate = date.today()
-    #         f.course_name = course
-    #         f.save()
-    #
-    #     return render(request, 'feedback.html', {'user': user, 'c': c})
-    return redirect("login")
+
+    c = Course_purchase.objects.filter(user_id=request.user.id).values_list('course_id',flat=True)
+    print(list(c))
+    courses=Courses.objects.filter(id__in=c)
+    if request.method == "POST":
+        feedback= request.POST['feedback']
+        course = request.POST['course']
+        selected_course=Courses.objects.get(id=course)
+        f = Feedback(user_id=request.user.id,feedback=feedback,course=selected_course)
+        f.save()
+    return render(request, 'feedback.html',{"c":courses})
+
 
 # def searchbar(request):
 #     if request.method == 'GET':
@@ -348,7 +382,7 @@ def insrtructorregistration(request):
             return redirect('yogaapp:insrtructorregistration')
         else:
             user=User.objects.create_user(username=email,password=password)
-            inst=RegisteredInstructor(user_id=user,first_name=firstname,last_name=lastname, phone=phone,cv=cv, certificate=certificate)
+            inst=RegisteredInstructor(user_id=user,first_name=firstname,last_name=lastname, phone=phone,cv=cv, certificate=certificate,email=email)
             user.save()
             inst.save()
 
@@ -393,86 +427,68 @@ def instructordashboard(request):
 
 
 def instructorviewprofile(request):
-    # if 'usr' in request.session:
-    #     id=request.session['usr']
-    #     ins = RegisteredInstructor.objects.filter(id=id)
-    #     return render(request, 'instructorviewprofile.html', {'ins': ins})
-    return redirect("login")
+        ins = RegisteredInstructor.objects.get(user_id=request.user.id)
+        return render(request, 'instructorviewprofile.html', {'ins': ins})
+
 
 
 def instructorchangepassword(request):
-    if 'usr' in request.session:
-        id=request.session['usr']
-        ins = RegisteredInstructor.objects.filter(id=id)
         if request.method == "POST":
             old_password = request.POST['old_password']
-            if Login.objects.filter(password=old_password):
-                new_password = request.POST['new_password']
-                confirm_password = request.POST['confirm_password']
-                if new_password == confirm_password:
-                    data = Login.objects.get(id=id)
-                    data.password = new_password
+            new_password = request.POST['new_password']
+            confirm_password = request.POST['confirm_password']
+            if new_password == confirm_password:
+                user=authenticate(username=request.user.username,password=old_password)
+                if user!=None:
+                    data = User.objects.get(username=user)
+                    data.set_password(new_password)
                     data.save()
-        return render(request, 'instructorchangepwd.html', {'ins': ins})
-    return redirect(login)
+                    messages.info(request,"Password updated successfully")
+                    return redirect("yogaapp:instructordashboard")
+            else:
+                messages.info(request, "Invalid password")
 
-def instructorallotedcourses(request):
-    if 'usr' in request.session:
-        id=request.session['usr']
-        ins = RegisteredInstructor.objects.filter(id=id)
-        c = Courses.objects.filter(instructor_id=id)
-        return render(request, 'instructorassignedcourses.html', {'ins': ins, 'c': c})
-    return redirect(login)
+        return render(request, 'instructorchangepwd.html')
+
+# Allotted Students
+
+def instructorallotedstudents(request):
+
+        ins = RegisteredInstructor.objects.get(user_id=request.user.id)
+        c = Courses.objects.get(user_id_id=request.user.id)
+        purchase_stds=Course_purchase.objects.filter(course_id=c.id).values_list('user_id',flat=True)
+        std=RegisteredStudent.objects.filter(user_id__in=purchase_stds)
+        print(list(std))
+        return render(request, 'instructorassignedstudents.html',{'course':c,'std':std})
+
 
 def instructorviewfeedback(request):
-    if 'usr' in request.session:
-        id=request.session['usr']
-        ins = RegisteredInstructor.objects.filter(id=id)
-        feed = Feedback.objects.all()
-        return render(request, 'instructorviewfeedback.html', {'ins': ins, 'feed': feed})
+        ins = RegisteredInstructor.objects.filter(user_id=request.user.id)
+        course=Courses.objects.get(user_id=request.user.id)
+        feed = Feedback.objects.filter(course_id=course.id)
+        std_ids=feed.values_list("user_id",flat=True)
+        std=RegisteredStudent.objects.filter(user_id__in=std_ids)
+        std_feed=zip(feed,std)
+        return render(request, 'instructorviewfeedback.html', {'ins': ins, 'std_feed': std_feed})
 
-    return redirect(login)
+
 
 def instructorupdate(request):
-    if 'usr' in request.session:
-        id=request.session['usr']
-        ins = RegisteredInstructor.objects.filter(id=id)
-        data = RegisteredInstructor.objects.get(id=id)
+        data = User.objects.get(id=request.user.id)
+        ins = RegisteredInstructor.objects.get(user_id=request.user.id)
         if request.method == "POST":
             firstname = request.POST['firstname']
             lastname = request.POST['lastname']
             phone = request.POST['phone']
-            email = request.POST['email']
-            data.firstname = firstname
-            data.lastname = lastname
-            data.phone = phone
-            data.email = email
-            data.save()
-
-
+            ins.first_name = firstname
+            ins.last_name = lastname
+            ins.phone = phone
+            ins.save()
+            messages.success(request,"Profile update successfully")
+            return redirect("yogaapp:instructorviewprofile")
         return render(request, 'instructorupdate.html', {'ins': ins})
 
-    return redirect(login)
-    #
-    #
-    #
-    #
-    #
-    #
-    #
-    # if 'usr' in request.session:
-    #     id=request.session['usr']
-    #
-    # return redirect(login)
-    #
-    #
-    #
-    #
-    #
-    # if 'usr' in request.session:
-    #     id=request.session['usr']
-    #
-    # return redirect(login)
+
 
 def AddVideo(request):
     form=VideoForm()
@@ -490,8 +506,6 @@ def Course_cancel(request,course_id):
     course=get_object_or_404(Course_purchase,course_id=course_id,user_id=request.user.id)
     course.delete()
     return redirect("yogaapp:coursesenrolled")
-
-
 
 
 def product(request):
